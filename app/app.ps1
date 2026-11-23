@@ -438,7 +438,7 @@ function Test-GameRunning([string]$exe) {
 # git hash of every file; the app hashes its own files the same way, .md files and .github left out), and when they are equal the
 # file is written. The zip of a commit carries the commit id as its zip comment, which is how a downloaded zip is checked.
 
-$UpdateRepo = 'REPLACE_WITH_YOUR_GITHUB_USER/guardian-of-the-globe'
+$UpdateRepo = 'EliasM108/guardian-of-the-globe'
 $UpdateApi = "https://api.github.com/repos/$UpdateRepo"
 $UpdateArchive = "https://github.com/$UpdateRepo/archive"
 # For tests only (docs\app.md): a local test server instead of GitHub. Anything but a local address is ignored.
@@ -3393,4 +3393,5 @@ catch {
     Show-Fatal $_.Exception.ToString()
     exit 1
 }
+
 
