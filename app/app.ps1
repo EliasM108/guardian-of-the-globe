@@ -1305,6 +1305,7 @@ function Format-Built([string]$built) {
 $InstallProblem = Get-InstallProblem
 $Tip = New-Object Windows.Forms.ToolTip
 
+function Get-KeepMenu($s) { $pr = $s.PSObject.Properties['KeepMenu']; if ($null -eq $pr -or $null -eq $pr.Value) { return $true }; return [bool]$pr.Value }
 function Start-Game([string]$name) {
     $play = Get-PlayCommand $name
     if (-not $play) { [void][Windows.Forms.MessageBox]::Show("The game '$name' is not built yet (or its files are gone). Please build it again.", $AppTitle, 'OK', 'Information'); return $false }
@@ -1321,6 +1322,11 @@ function Start-Game([string]$name) {
     $State.PlayStarted = Get-Date
     $State.Playing = [Diagnostics.Process]::Start($psi)
     $State.PlayingName = $name
+    try {
+        $sk = Get-Settings
+        $script:menuMinimized = $false
+        if (-not (Get-KeepMenu $sk)) { $form.WindowState = 'Minimized'; $script:menuMinimized = $true }
+    } catch { }
     $playTimer.Start()
     $true
 }
@@ -1362,7 +1368,7 @@ $playTimer.Add_Tick({
         if ($null -eq $State.Playing -or $State.Playing.HasExited) {
             # Closing the game window ends it with code 0; anything else is a crash, and the game has no console to say so.
             $code = if ($State.Playing) { $State.Playing.ExitCode } else { 0 }
-            $State.Playing = $null; $playTimer.Stop(); Update-FasterOffers
+            $State.Playing = $null; $playTimer.Stop(); Update-FasterOffers; if ($script:menuMinimized) { $script:menuMinimized = $false; $form.WindowState = 'Normal'; [void]$form.Activate() }; try { Update-HomeState } catch { }
             if ($code -ne 0) {
                 $logs = Get-GameFile $State.PlayingName 'logs'
                 $meaning = Get-ExitCodeText $code
@@ -1685,6 +1691,7 @@ if ($env:PS2APP_CLASSIC -ne '1') {
         $homeMenu.BringToFront()
         $s0 = Get-Settings
         $homeMenu.LoadSettings([bool]$s0.Fullscreen, [bool]$s0.Widescreen, [int]$s0.Language, [string]$s0.Region, [bool]$s0.AutoUpdate)
+        $homeMenu.SetKeepOpen((Get-KeepMenu $s0))
         $homeMenu.Add_ButtonClicked({ param($id) Invoke-HomeAction ([string]$id) })
         $homeMenu.Add_SettingChanged({ param($k, $v)
             $s = Get-Settings
@@ -1694,6 +1701,7 @@ if ($env:PS2APP_CLASSIC -ne '1') {
                 'autoupdate' { $s.AutoUpdate = ([string]$v -eq '1') }
                 'language' { $s.Language = [int]$v }
                 'region' { $s.Region = [string]$v }
+                'keepopen' { $s | Add-Member -NotePropertyName KeepMenu -NotePropertyValue ([string]$v -eq '1') -Force }
             }
             Save-Settings $s
         })
@@ -1701,14 +1709,14 @@ if ($env:PS2APP_CLASSIC -ne '1') {
         $syncTimer = New-Object Windows.Forms.Timer
         $syncTimer.Interval = 250
         $syncTimer.Add_Tick({
-            try { Sync-Engine }
+            try { Sync-Engine; $script:syncN = 1 + [int]$script:syncN; if ($script:syncN % 12 -eq 0 -and $script:engineKey -eq 'welcome') { $sig = (@(Get-BuiltGames | ForEach-Object { [string]$_.name }) -join ','); if ($sig -ne $script:builtSig) { $script:builtSig = $sig; Update-HomeState } } }
             catch { if (-not $script:syncErr) { $script:syncErr = $true; Write-AppLog ('Menu sync error: ' + $_.Exception.Message) } }
         })
         $syncTimer.Start()
     } catch {
         if ($homeMenu) { $form.Controls.Remove($homeMenu) }
         $homeMenu = $null
-        Write-AppLog ('Home menu not loaded: ' + $_.Exception.Message)
+        Write-AppLog ('Home menu not loaded: ' + $_.Exception.Message); [void][Windows.Forms.MessageBox]::Show('The menu could not start: ' + $_.Exception.Message + [Environment]::NewLine + 'Details are in games\app.log.', $AppTitle, 'OK', 'Error'); exit 1
     }
 }
 $U.start.Add_Click({ Show-Screen 'choose' })

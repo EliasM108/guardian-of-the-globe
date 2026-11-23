@@ -45,7 +45,7 @@ namespace Gotg
         private bool discKnown;
         private string discText = "";
         private string[] choices = new string[0];
-        private bool setFull, setWide, setUpdate;
+        private bool setFull, setWide, setUpdate, setKeep = true;
         private int setLang;
         private string setRegion = "auto";
         private string bStatus = "", bDetail = "", bElapsed = "", dName = "", dText = "", notice = "";
@@ -141,7 +141,7 @@ namespace Gotg
             if (changed && view == View.Build) BuildItems();
         }
 
-        public void SetDone(string name, string text)
+        public void SetKeepOpen(bool v) { setKeep = v; } public void SetDone(string name, string text)
         {
             dName = name ?? "";
             dText = text ?? "";
@@ -257,7 +257,7 @@ namespace Gotg
         private void BuildDone()
         {
             Add("doneplay", "PLAY", 0, 240f, 412f, 320f, 54f, true);
-            Add("doneback", "BACK TO MENU", 5, 240f, 476f, 320f, 46f, true);
+            Item keepItem = Add("keepopen", "KEEP MENU OPEN", -1, 240f, 374f, 320f, 30f, false); keepItem.Kind = 1; keepItem.On = setKeep; keepItem.Anim = keepItem.On ? 1f : 0f; Add("doneback", "BACK TO MENU", 5, 240f, 476f, 320f, 46f, true);
         }
 
                 private string cFile = "", cSize = "", cSerial = "", cRegion = "";
@@ -619,7 +619,7 @@ namespace Gotg
                 it.On = !it.On;
                 if (id == "fullscreen") setFull = it.On;
                 else if (id == "widescreen") setWide = it.On;
-                else if (id == "autoupdate") setUpdate = it.On;
+                else if (id == "autoupdate") setUpdate = it.On; else if (id == "keepopen") setKeep = it.On;
                 RaiseSetting(id, it.On ? "1" : "0");
                 return;
             }
