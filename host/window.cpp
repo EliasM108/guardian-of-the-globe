@@ -46,6 +46,7 @@
 #include <vector>
 
 #include "keymap.hpp"
+#include <atomic>
 #include "quickmenu.hpp"
 #include "ps2/crash.hpp"
 #include "ps2/hitch.hpp"
@@ -80,6 +81,101 @@ constexpr PadBinding kPadButtons[] = {
     {SDL_CONTROLLER_BUTTON_DPAD_LEFT, kLeft},   {SDL_CONTROLLER_BUTTON_DPAD_RIGHT, kRight},
 };
 
+// --- Guardian of the Globe: volume (audio.ini) and the controller button map (pad.ini) ---
+constexpr std::size_t kPadCount = sizeof kPadButtons / sizeof kPadButtons[0];
+std::uint16_t g_pad_mask[kPadCount] = {};
+std::string g_pad_ini_path, g_audio_ini_path;
+std::atomic<int> g_volume{100};
+std::atomic<bool> g_muted{false};
+
+std::string ini_read(const std::string &path) {
+    std::string text;
+    if (path.empty()) return text;
+    if (std::FILE *f = ps2::os::open(path, "rb")) {
+        char buffer[2048];
+        std::size_t n;
+        while ((n = std::fread(buffer, 1, sizeof buffer, f)) > 0) text.append(buffer, n);
+        std::fclose(f);
+    }
+    return text;
+}
+
+// calls on(name, value) for every "name = value" line, both lower case without spaces; '#' starts a comment
+template <typename F>
+void ini_each(const std::string &text, F on) {
+    std::size_t pos = 0;
+    while (pos < text.size()) {
+        std::size_t end = text.find('\n', pos);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(pos, end - pos);
+        pos = end + 1;
+        const std::size_t hash = line.find('#');
+        if (hash != std::string::npos) line.resize(hash);
+        const std::size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string name, value;
+        for (std::size_t i = 0; i < line.size(); ++i) {
+            const char c = line[i];
+            if (c == ' ' || c == '\t' || c == '\r' || (c == '=' && i == eq)) continue;
+            const char lower = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+            if (i < eq) name += lower;
+            else if (i > eq) value += lower;
+        }
+        if (!name.empty()) on(name, value);
+    }
+}
+
+void audio_load() {
+    ini_each(ini_read(g_audio_ini_path), [](const std::string &name, const std::string &value) {
+        if (name == "volume") {
+            const int v = std::atoi(value.c_str());
+            g_volume = v < 0 ? 0 : v > 100 ? 100 : v;
+        } else if (name == "mute") {
+            g_muted = value == "1" || value == "on" || value == "yes" || value == "true";
+        }
+    });
+    std::fprintf(stderr, "[audio] volume %d%%%s (F3 / F4 change it, F6 mutes)\n", g_volume.load(), g_muted.load() ? ", muted" : "");
+}
+
+void audio_save() {
+    if (g_audio_ini_path.empty()) return;
+    if (std::FILE *f = ps2::os::open(g_audio_ini_path, "w")) {
+        std::fprintf(f, "# Guardian of the Globe: sound (in the game: F3 / F4 volume, F6 mute)\nvolume = %d\nmute = %d\n", g_volume.load(), g_muted.load() ? 1 : 0);
+        std::fclose(f);
+    }
+}
+
+void pad_map_load() {
+    for (std::size_t i = 0; i < kPadCount; ++i) g_pad_mask[i] = kPadButtons[i].mask;
+    const std::string text = ini_read(g_pad_ini_path);
+    if (text.empty()) return;
+    ini_each(text, [](const std::string &name, const std::string &value) {
+        static const struct {
+            const char *name;
+            SDL_GameControllerButton button;
+        } kPhysical[] = {
+            {"a", SDL_CONTROLLER_BUTTON_A}, {"b", SDL_CONTROLLER_BUTTON_B}, {"x", SDL_CONTROLLER_BUTTON_X}, {"y", SDL_CONTROLLER_BUTTON_Y},
+            {"lb", SDL_CONTROLLER_BUTTON_LEFTSHOULDER}, {"rb", SDL_CONTROLLER_BUTTON_RIGHTSHOULDER},
+            {"ls", SDL_CONTROLLER_BUTTON_LEFTSTICK}, {"rs", SDL_CONTROLLER_BUTTON_RIGHTSTICK},
+        };
+        static const struct {
+            const char *name;
+            std::uint16_t mask;
+        } kTarget[] = {
+            {"cross", kCross}, {"circle", kCircle}, {"square", kSquare}, {"triangle", kTriangle}, {"l1", kL1}, {"r1", kR1},
+            {"l2", kL2}, {"r2", kR2}, {"l3", kL3}, {"r3", kR3}, {"start", kStart}, {"select", kSelect}, {"none", 0},
+        };
+        for (const auto &p : kPhysical) {
+            if (name != p.name) continue;
+            for (const auto &t : kTarget) {
+                if (value != t.name) continue;
+                for (std::size_t i = 0; i < kPadCount; ++i)
+                    if (kPadButtons[i].button == p.button) g_pad_mask[i] = t.mask;
+            }
+        }
+    });
+    std::fprintf(stderr, "[pad] button map read from %s\n", g_pad_ini_path.c_str());
+}
 SDL_Window *g_window = nullptr;
 #ifdef __APPLE__
 SDL_MetalView g_metal_view = nullptr;
@@ -166,6 +262,11 @@ bool g_overlay_on = false;  // g_menu_picture is laid over the game's picture (t
 std::uint64_t g_script_extra = 0;  // the pad script's clock goes on while the menu is open (the game's frames stand still)
 
 void refresh_title() {
+    // Guardian of the Globe: the launcher sets PS2_TITLE_ONLY=1 and the title is only PS2_WINDOW_TITLE (no speed, no notes)
+    if (!g_game_title.empty() && ps2::os::env("PS2_TITLE_ONLY") == "1") {
+        SDL_SetWindowTitle(g_window, g_game_title.c_str());
+        return;
+    }
     std::string title = g_speed_title;
     if (!g_notice_text.empty()) title = g_notice_text + "   |   " + title;
     if (!g_game_title.empty()) title = g_game_title + "   |   " + title;
@@ -773,7 +874,7 @@ void poll_port(int port) {
     if (port == 0) read_keyboard(pressed, lx, ly, rx, ry);
     if (pad) {
         for (const PadBinding &b : kPadButtons)
-            if (b.button != SDL_CONTROLLER_BUTTON_BACK && SDL_GameControllerGetButton(pad, b.button)) pressed |= b.mask;
+            if (b.button != SDL_CONTROLLER_BUTTON_BACK && SDL_GameControllerGetButton(pad, b.button)) pressed |= g_pad_mask[&b - kPadButtons];
         // Select, then Start opens the quick menu, and the game must get neither. So the game gets this Select late: once it has been
         // held for 300 ms without Start, or as a short press when it is let go without Start. (Start first and then Select would
         // already have reached the game: the way is Select first.) A Select of the keyboard (Tab) is not held back.
@@ -1128,6 +1229,19 @@ void menu_command(quickmenu::Command c, int step) {
     menu_paint();
 }
 
+// Guardian of the Globe: F3 / F4 volume down / up, F6 mute. Saved in audio.ini; a short note shows the level.
+void volume_key(int direction) {
+    if (direction == 0) {
+        g_muted = !g_muted.load();
+    } else {
+        const int v = g_volume.load() + direction * 5;
+        g_volume = v < 0 ? 0 : v > 100 ? 100 : v;
+        g_muted = false;
+    }
+    audio_save();
+    g_notice_text = g_muted.load() ? std::string("Sound off") : std::string("Volume ") + std::to_string(g_volume.load()) + "%";
+    g_notice_until = SDL_GetTicks() + 1500;
+}
 bool is_help_key(SDL_Scancode k) {
     const std::vector<int> &keys = g_keys.inputs[keymap::Help];
     return std::find(keys.begin(), keys.end(), static_cast<int>(k)) != keys.end();
@@ -1206,6 +1320,9 @@ bool menu_event(const SDL_Event &e) {
                 ps2::quick_request(ps2::QuickKey::report);
             }
             break;
+        case SDL_SCANCODE_F3: volume_key(-1); break;
+        case SDL_SCANCODE_F4: volume_key(1); break;
+        case SDL_SCANCODE_F6: if (!e.key.repeat) volume_key(0); break;
         case SDL_SCANCODE_F11: if (!e.key.repeat) menu_command(Command::fullscreen, 1); break;
         default:
             if (!e.key.repeat && is_help_key(k)) menu_command(Command::keys, 1);
@@ -1322,7 +1439,10 @@ void poll() {
         if (e.type == SDL_KEYDOWN && !e.key.repeat) {
             if (is_help_key(e.key.keysym.scancode))
                 show_key_card((std::string("key ") + SDL_GetScancodeName(e.key.keysym.scancode) + " went down").c_str());
-            if (e.key.keysym.scancode == SDL_SCANCODE_F2) cycle_look();
+            if (e.key.keysym.scancode == SDL_SCANCODE_F3) volume_key(-1);
+        else if (e.key.keysym.scancode == SDL_SCANCODE_F4) volume_key(1);
+        else if (e.key.keysym.scancode == SDL_SCANCODE_F6 && !e.key.repeat) volume_key(0);
+        if (e.key.keysym.scancode == SDL_SCANCODE_F2) cycle_look();
             if (e.key.keysym.scancode == SDL_SCANCODE_F5) ps2::quick_request(ps2::QuickKey::save);
             else if (e.key.keysym.scancode == SDL_SCANCODE_F8) ps2::quick_request(ps2::QuickKey::load);
             else if (e.key.keysym.scancode == SDL_SCANCODE_F9) ps2::quick_request(ps2::QuickKey::report);
@@ -1762,6 +1882,15 @@ void audio_callback(void *, Uint8 *stream, int length) {
     }
     ps2::crash::test_poll(ps2::crash::Thread::Sound);
     g_pipe->render(reinterpret_cast<std::int16_t *>(stream), static_cast<std::size_t>(length) / 4, audio_seconds(), mix_beep);
+    {
+        // Guardian of the Globe: master volume and mute
+        const int vol = g_muted.load() ? 0 : g_volume.load();
+        if (vol < 100) {
+            std::int16_t *s = reinterpret_cast<std::int16_t *>(stream);
+            const std::size_t count = static_cast<std::size_t>(length) / 2;
+            for (std::size_t i = 0; i < count; ++i) s[i] = static_cast<std::int16_t>(static_cast<int>(s[i]) * vol * vol / 10000);
+        }
+    }
 }
 
 void write_audio_dumps() {
@@ -1838,6 +1967,12 @@ bool open_window(bool fullscreen) {
     }
     if (!script.empty()) load_pad_script(script);
     g_keys_path = ps2::os::env("PS2_KEYS");
+    g_audio_ini_path = ps2::os::env("PS2_AUDIO_INI");
+    if (g_audio_ini_path.empty()) g_audio_ini_path = ps2::quick_folder("audio.ini");
+    g_pad_ini_path = ps2::os::env("PS2_PAD_INI");
+    if (g_pad_ini_path.empty()) g_pad_ini_path = ps2::quick_folder("pad.ini");
+    audio_load();
+    pad_map_load();
     if (g_keys_path.empty()) g_keys_path = ps2::quick_folder("keys.ini");  // next to the memory card, like the quick saves
     if (const std::string word = ps2::os::env("PS2_LOOK"); !word.empty()) {
         for (int i = 0; i < keymap::kLookCount; ++i)
@@ -1870,7 +2005,8 @@ bool open_window(bool fullscreen) {
     if (!std::getenv("PS2_SDL_RENDERER")) flags |= SDL_WINDOW_METAL;
 #endif
     g_game_title = ps2::os::env("PS2_WINDOW_TITLE");
-    const std::string initial_title = g_game_title.empty() ? g_speed_title : g_game_title + "   |   " + g_speed_title;
+    const bool title_only = !g_game_title.empty() && ps2::os::env("PS2_TITLE_ONLY") == "1";
+    const std::string initial_title = title_only ? g_game_title : (g_game_title.empty() ? g_speed_title : g_game_title + "   |   " + g_speed_title);
     g_window = SDL_CreateWindow(initial_title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, ps2::g_options.widescreen ? 1280 : 960, 720, flags);
     if (!g_window) {
         std::fprintf(stderr, "SDL: %s\n", SDL_GetError());
@@ -1884,6 +2020,20 @@ bool open_window(bool fullscreen) {
     if (SDL_GetWindowWMInfo(g_window, &wm_info) && wm_info.subsystem == SDL_SYSWM_WINDOWS) {
         ShowWindow(static_cast<HWND>(wm_info.info.win.window), SW_SHOWNORMAL);
         SetForegroundWindow(static_cast<HWND>(wm_info.info.win.window));
+        // Guardian of the Globe: the window's icon (title bar and taskbar) from the .ico file named in PS2_WINDOW_ICON
+        const std::string icon_path = ps2::os::env("PS2_WINDOW_ICON");
+        if (!icon_path.empty()) {
+            const int wide_len = MultiByteToWideChar(CP_UTF8, 0, icon_path.c_str(), -1, nullptr, 0);
+            if (wide_len > 1) {
+                std::wstring wide_path(static_cast<std::size_t>(wide_len), L'\0');
+                MultiByteToWideChar(CP_UTF8, 0, icon_path.c_str(), -1, &wide_path[0], wide_len);
+                const HWND hwnd = static_cast<HWND>(wm_info.info.win.window);
+                HANDLE ico_big = LoadImageW(nullptr, wide_path.c_str(), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_LOADFROMFILE);
+                HANDLE ico_sm = LoadImageW(nullptr, wide_path.c_str(), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_LOADFROMFILE);
+                if (ico_big) SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(ico_big));
+                if (ico_sm) SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(ico_sm));
+            }
+        }
     }
 #endif
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");

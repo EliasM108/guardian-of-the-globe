@@ -4,7 +4,8 @@ $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path -LiteralPath $csc)) { $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe' }
 if (-not (Test-Path -LiteralPath $csc)) { 'csc.exe not found (.NET Framework 4 is missing).'; exit 1 }
 $ico = Join-Path $app 'guardian.ico'
-try {
+$own = Join-Path $app 'guardian-of-the-globe.ico'
+if (-not (Test-Path -LiteralPath $own)) { try {
     Add-Type -AssemblyName System.Drawing
     $bmp = New-Object Drawing.Bitmap 256, 256
     $g = [Drawing.Graphics]::FromImage($bmp)
@@ -32,7 +33,8 @@ try {
     $bw.Write([uint32]$png.Length); $bw.Write([uint32]22)
     $bw.Write($png)
     $bw.Close()
-} catch { $ico = $null }
+} catch { $ico = $null } }
+if (Test-Path -LiteralPath $own) { $ico = $own }
 $out = Join-Path $root 'Guardian of the Globe.exe'
 $src = Join-Path $app 'Launcher.cs'
 $a = @('/nologo', '/target:winexe', '/optimize+', "/out:$out", '/reference:System.Windows.Forms.dll')

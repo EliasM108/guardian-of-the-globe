@@ -1,37 +1,41 @@
-﻿<p align="center"><img src="docs/assets/banner.svg" alt="Guardian of the Globe"></p>
+<p align="center"><img src="docs/banner.png" alt="Guardian of the Globe" width="720"></p>
 
 # Guardian of the Globe
 
-Native PC recompilation tooling for **Ben 10: Protector of Earth** (PS2). Pick your own disc image, build it on your PC, play it. Windows only.
+Native PC recompilation tooling for **Ben 10: Protector of Earth** (PS2). You bring your own disc image; the app turns it into a program that runs natively on your PC. It has its own menu for building, playing and settings.
 
-**Website:** https://eliasm108.github.io/guardian-of-the-globe/
+> Unofficial fan project. Not affiliated with, endorsed by or connected to the owners of Ben 10 or the game. **No game files, disc images or game code are included or ever uploaded.** You need your own legally obtained copy of the game.
 
-## Status
+## Status (v0.1.0)
 
-| Version | Game ID | State |
+| Version | Disc ID | Status |
 |---|---|---|
-| USA | SLUS_216.61 | Works |
-| Europe | SLES_549.51 | Works (region fix included) |
+| USA (NTSC) | SLUS_216.61 | works |
+| EU (PAL) | SLES_549.51 | works (includes a fix for a startup race in the PS2 IOP emulation, see `docs/EU-region-fix.md`) |
 
-## Quick start
+The Graphics settings tab is not finished yet and is greyed out. Full screen and widescreen are not available from the menu yet.
 
-1. Download this repository as a ZIP and unzip it anywhere.
-2. Run `Guardian of the Globe.exe`.
-3. Choose your own disc image. The version is detected automatically.
-4. Press Build (a few minutes, once), then Play.
+## Quick start (Windows 10/11, 64-bit)
 
-The app downloads its own build tools the first time. Nothing from the game is ever uploaded or shared.
+1. Download this repository as a ZIP from the green **Code** button and unzip it anywhere.
+2. Download **`toolpack.zip`** from the [v0.1.0 release](https://github.com/EliasM108/guardian-of-the-globe/releases/tag/v0.1.0) and put it next to `Guardian of the Globe.exe` (do not unzip it).
+3. Start `Guardian of the Globe.exe`.
+4. Press **COMPILE GAME** and pick your `.iso` (USA or EU). The first build takes a while and needs a few GB of free disk space.
+5. Press **PLAY**.
 
-## What is new
+The app works fully offline. It never downloads anything and never checks for updates: the build tools come from `toolpack.zip`.
 
-- **Europe fix.** The EU version showed a black screen because a streaming callback was lost when the answer arrived too early. Fixed in the runtime, see `docs/EU-region-fix.md`.
-- **New launcher.** Black and green glass interface with a guided install flow.
+## Settings
 
-## Legal
+- **General:** keep the menu open while playing, save folder, game files.
+- **Sound:** volume and mute (also F3 / F4 / F6 in the game).
+- **Controls:** keyboard, mouse and controller. Press a row, then press the key or button you want within about 5 seconds; with no input the row is left empty.
+- Saves (memory card) are kept in the save folder, by default `Documents\Guardian of the Globe\Saves`.
 
-This project contains tooling, configs and patches only. It does not include the game, and you must supply a disc image you own. Do not share built executables or generated code, because they contain the game's code. This is an unofficial fan project, not affiliated with or endorsed by the owners of Ben 10 or the game. All trademarks belong to their owners.
+In the game: F1 quick menu, F5 quick save, F8 quick load, F11 full screen.
 
-## Credits
+## Legal and credit
 
-Based on open-source work by exoteric33 and Samir Nuri (MIT). See `NOTICE.md` and `LICENSE`.
-
+- Built on [exoteric33/ps2-native-recomp](https://github.com/exoteric33/ps2-native-recomp) (MIT, with Samir Nuri). See `LICENSE` and `NOTICE.md`.
+- This repository contains tooling, configs, patches and our own interface only. All artwork in the app is original and drawn in code.
+- Ben 10 and related names belong to their respective owners.

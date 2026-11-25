@@ -79,3 +79,6 @@ __pycache__/
 # local run data
 !Guardian of the Globe.exe
 settings.json
+
+/toolpack.*
+/toolpack/

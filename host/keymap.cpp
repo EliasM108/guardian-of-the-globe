@@ -169,7 +169,7 @@ const char *sharp_2d_word(int sharp) {
 std::string with_sharp_2d(const std::string &file_text, int sharp) { return with_line(file_text, "sharp2d", std::string("sharp_2d = ") + sharp_2d_word(sharp)); }
 
 bool is_reserved(int input) {
-    return input == SDL_SCANCODE_F1 || input == SDL_SCANCODE_F2 || input == SDL_SCANCODE_F5 || input == SDL_SCANCODE_F8 || input == SDL_SCANCODE_F9 || input == SDL_SCANCODE_F11;
+    return input == SDL_SCANCODE_F1 || input == SDL_SCANCODE_F2 || input == SDL_SCANCODE_F3 || input == SDL_SCANCODE_F4 || input == SDL_SCANCODE_F6 || input == SDL_SCANCODE_F5 || input == SDL_SCANCODE_F8 || input == SDL_SCANCODE_F9 || input == SDL_SCANCODE_F11;
 }
 
 Config defaults() {

@@ -231,6 +231,8 @@ namespace Ps2App {
 }
 '@
     }
+    $brandIco = Join-Path $PSScriptRoot 'guardian-of-the-globe.ico'
+    if (Test-Path -LiteralPath $brandIco) { $iconFile = $brandIco }
     [Ps2App.ShellLink]::Create($lnk, $target, $arguments, $workDir, $iconFile, $description)
 }
 
@@ -357,6 +359,15 @@ function Test-AppPython {
     [bool](Is-Installed $python)
 }
 
+# An offline pack of the build tools next to the app (made with scripts\toolpack.ps1): used instead of the download.
+function Find-ToolPack {
+    foreach ($n in @('toolpack.zip', 'toolpack\toolpack.zip')) {
+        $p = Join-Path $Root $n
+        if (Test-Path -LiteralPath $p) { return $p }
+    }
+    return ''
+}
+
 function Test-SetupNeeded {
     foreach ($file in 'build\tools\eerecomp.exe', 'build\tools\vurecomp.exe', 'third_party\wgpu-native\lib\libwgpu_native.a', 'third_party\sdl2\lib\libSDL2.dll.a') {
         if (-not (Test-Path -LiteralPath (Join-Path $Root $file))) { return $true }
@@ -366,17 +377,35 @@ function Test-SetupNeeded {
 
 # The command that starts a built game: the runner, its arguments and the folder to start it in.
 function Get-Settings {
-    $s = @{ Fullscreen = $false; Widescreen = $false; Language = 0; Region = 'auto'; AutoUpdate = $false; DiscPath = '' }
+    $s = @{ Fullscreen = $false; Widescreen = $false; Language = 0; Region = 'auto'; AutoUpdate = $false; DiscPath = ''; KeepMenu = $true; SaveDir = '' }
     $file = Join-Path $Root 'settings.json'
     if (Test-Path -LiteralPath $file) {
         try {
             $j = Get-Content -Raw -LiteralPath $file | ConvertFrom-Json
-            foreach ($k in @($s.Keys)) { if ($null -ne $j.$k) { $s[$k] = $j.$k } }
+            foreach ($k in @($s.Keys)) { $pr = $j.PSObject.Properties[$k]; if ($pr -and $null -ne $pr.Value) { $s[$k] = $pr.Value } }
         } catch { }
     }
     $s
 }
 function Save-Settings($s) { try { ($s | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $Root 'settings.json') -Encoding UTF8 } catch { } }
+function Get-SaveDir {
+    $d = ''
+    try { $d = [string](Get-Settings).SaveDir } catch { }
+    if (-not $d) { $d = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Guardian of the Globe\Saves' }
+    $d
+}
+# The player's saves (memory card, quick saves F5/F8, keys.ini, logs) live in the save folder, one subfolder per game. A card that an
+# older version kept next to the game, or mirrored in the save folder itself, is copied over once (the newest wins).
+function Get-GameSaveDir([string]$name) { Join-Path (Get-SaveDir) $name }
+function Sync-SaveCard([string]$name) {
+    if (-not $name) { return }
+    $dir = Get-GameSaveDir $name
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $new = Join-Path $dir "$name.ps2"
+    if (Test-Path -LiteralPath $new) { return }
+    $old = @((Join-Path (Get-SaveDir) "$name.ps2"), (Get-GameFile $name "$name.ps2")) | Where-Object { Test-Path -LiteralPath $_ } | Sort-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc } -Descending | Select-Object -First 1
+    if ($old) { Copy-Item -LiteralPath $old -Destination $new -Force }
+}
 function Get-PlayCommand([string]$name) {
     $game = Read-Game $name
     if (-not $game -or -not $game.built) { return $null }
@@ -395,8 +424,11 @@ function Get-PlayCommand([string]$name) {
     if ($set.Widescreen -and -not $game.widescreen) { $arguments += ' --widescreen' }
     if ([int]$set.Language -gt 0) { $arguments += (' --language {0}' -f [int]$set.Language) }
     if ($set.Region -eq 'pal') { $arguments += ' --pal' } elseif ($set.Region -eq 'ntsc') { $arguments += ' --ntsc' }
-    $arguments += ' --memcard "{0}"' -f (Get-GameFile $name "$name.ps2")
-    @{ Exe = $exe; Elf = $elf; Iso = $iso; Card = (Get-GameFile $name "$name.ps2"); Dir = (Join-Path $GamesDir $name); Arguments = $arguments }
+    $ctlDir = Get-SaveDir
+    $env:PS2_KEYS = (Join-Path $ctlDir 'keys.ini'); $env:PS2_PAD_INI = (Join-Path $ctlDir 'pad.ini'); $env:PS2_AUDIO_INI = (Join-Path $ctlDir 'audio.ini')
+    $saveHere = Get-GameSaveDir $name
+    $arguments += ' --memcard "{0}" --quick-dir "{1}"' -f (Join-Path $saveHere "$name.ps2"), $saveHere
+    @{ Exe = $exe; Elf = $elf; Iso = $iso; Card = (Join-Path $saveHere "$name.ps2"); Dir = (Join-Path $GamesDir $name); Arguments = $arguments }
 }
 
 # How many vector programs (VU1 microprograms) were recorded since the last build. ps2run writes every vector program it has to
@@ -458,6 +490,8 @@ function Get-InstalledVersion {
 
 # A clone made with git is updated with git, and a developer can switch the lookup off.
 function Test-UpdateAllowed {
+    return $false  # online updates are permanently disabled
+    return $false   # v0.1.2: online update checks are permanently off
     if ($UpdateRepo -like 'REPLACE_WITH*') { return $false }
     if ($env:PS2APP_NO_UPDATE_CHECK -eq '1') { return $false }
     if (-not [bool](Get-Settings).AutoUpdate) { return $false }
@@ -950,6 +984,16 @@ function Add-Button($parent, [string]$name, [string]$text, [int]$x, [int]$y, [in
 
 # Our own small icon (a disc on a blue tile), drawn in code.
 function New-AppIcon {
+    try {
+        $brand = Join-Path $PSScriptRoot 'guardian-of-the-globe.ico'
+        if (Test-Path -LiteralPath $brand) {
+            $ic = New-Object Drawing.Icon($brand)
+            Write-AppLog ("icon: loaded " + $brand)
+            return $ic
+        }
+        Write-AppLog ("icon: file not found " + $brand)
+    } catch { Write-AppLog ("icon: load failed " + $_.Exception.Message) }
+    Write-AppLog 'icon: using drawn fallback'
     $bmp = New-Object Drawing.Bitmap 32, 32
     $g = [Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = 'AntiAlias'
@@ -963,15 +1007,21 @@ function New-AppIcon {
     [Drawing.Icon]::FromHandle($bmp.GetHicon())
 }
 
+# own taskbar identity, so the taskbar shows our window icon and not the powershell.exe one
+try {
+    Add-Type -Namespace Ps2Brand -Name Aumid -MemberDefinition '[System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] public static extern int SetCurrentProcessExplicitAppUserModelID(string appID);'
+    [void][Ps2Brand.Aumid]::SetCurrentProcessExplicitAppUserModelID('GuardianOfTheGlobe.App')
+} catch { Write-AppLog ("aumid failed: " + $_.Exception.Message) }
 $form = New-Object Windows.Forms.Form
 $form.Text = $AppTitle
 $form.AutoScaleMode = 'None'
-$form.ClientSize = New-Size 800 600
+$form.ClientSize = New-Size 800 662
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
 $form.BackColor = $C.Page
 $form.Font = New-Font 11
+$form.ShowIcon = $true
 try { $form.Icon = New-AppIcon } catch { Write-AppLog $_.Exception.ToString() }
 
 $P = @{}   # the screens
@@ -1305,7 +1355,7 @@ function Format-Built([string]$built) {
 $InstallProblem = Get-InstallProblem
 $Tip = New-Object Windows.Forms.ToolTip
 
-function Get-KeepMenu($s) { $pr = $s.PSObject.Properties['KeepMenu']; if ($null -eq $pr -or $null -eq $pr.Value) { return $true }; return [bool]$pr.Value }
+function Get-KeepMenu($s) { try { if ($s -is [hashtable]) { if ($s.ContainsKey('KeepMenu') -and $null -ne $s['KeepMenu']) { return [bool]$s['KeepMenu'] }; return $true }; $pr = $s.PSObject.Properties['KeepMenu']; if ($null -eq $pr -or $null -eq $pr.Value) { return $true }; return [bool]$pr.Value } catch { return $true } }
 function Start-Game([string]$name) {
     $play = Get-PlayCommand $name
     if (-not $play) { [void][Windows.Forms.MessageBox]::Show("The game '$name' is not built yet (or its files are gone). Please build it again.", $AppTitle, 'OK', 'Information'); return $false }
@@ -1313,19 +1363,25 @@ function Start-Game([string]$name) {
         [void][Windows.Forms.MessageBox]::Show("The disc image of '$name' is not at its old place any more:`n$($play.Iso)`nPut it back, or build the game again.", $AppTitle, 'OK', 'Information')
         return $false
     }
+    try { Sync-SaveCard $name } catch { Write-AppLog ('Save sync failed: ' + $_.Exception.Message) }
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = $play.Exe
     $psi.Arguments = $play.Arguments
     $psi.WorkingDirectory = $play.Dir
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
+    # the game window says only our name and shows our icon (read by host\window.cpp)
+    $psi.EnvironmentVariables['PS2_WINDOW_TITLE'] = $AppTitle
+    $psi.EnvironmentVariables['PS2_TITLE_ONLY'] = '1'; foreach ($ev in @('PS2_KEYS','PS2_PAD_INI','PS2_AUDIO_INI')) { $evv = [Environment]::GetEnvironmentVariable($ev); if ($evv) { $psi.EnvironmentVariables[$ev] = $evv } }; Write-AppLog ('Play ' + $name + ': audio=' + $env:PS2_AUDIO_INI + ' pad=' + $env:PS2_PAD_INI + ' keys=' + $env:PS2_KEYS)
+    $gIco = Join-Path $PSScriptRoot 'guardian-of-the-globe.ico'
+    if (Test-Path -LiteralPath $gIco) { $psi.EnvironmentVariables['PS2_WINDOW_ICON'] = $gIco }
     $State.PlayStarted = Get-Date
     $State.Playing = [Diagnostics.Process]::Start($psi)
     $State.PlayingName = $name
     try {
         $sk = Get-Settings
         $script:menuMinimized = $false
-        if (-not (Get-KeepMenu $sk)) { $form.WindowState = 'Minimized'; $script:menuMinimized = $true }
+        if (-not (Get-KeepMenu $sk)) { $script:menuMinimized = $false; $form.Close() }
     } catch { }
     $playTimer.Start()
     $true
@@ -1336,7 +1392,7 @@ function Start-Game([string]$name) {
 # does not fit this Windows) never gets that far and leaves none.
 function Find-GameLog([string]$name, [datetime]$since) {
     $found = @()
-    foreach ($folder in (Get-GameFile $name 'logs'), (Join-Path ([IO.Path]::GetTempPath()) 'ps2run-logs')) {
+    foreach ($folder in (Join-Path (Get-GameSaveDir $name) 'logs'), (Get-GameFile $name 'logs'), (Join-Path ([IO.Path]::GetTempPath()) 'ps2run-logs')) {
         if (-not (Test-Path -LiteralPath $folder -PathType Container)) { continue }
         $found += @(Get-ChildItem -LiteralPath $folder -Filter 'ps2run_*.log' -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $since.AddSeconds(-5) })
     }
@@ -1368,9 +1424,9 @@ $playTimer.Add_Tick({
         if ($null -eq $State.Playing -or $State.Playing.HasExited) {
             # Closing the game window ends it with code 0; anything else is a crash, and the game has no console to say so.
             $code = if ($State.Playing) { $State.Playing.ExitCode } else { 0 }
-            $State.Playing = $null; $playTimer.Stop(); Update-FasterOffers; if ($script:menuMinimized) { $script:menuMinimized = $false; $form.WindowState = 'Normal'; [void]$form.Activate() }; try { Update-HomeState } catch { }
+            $State.Playing = $null; $playTimer.Stop(); try { Sync-SaveCard ([string]$State.PlayingName) } catch { }; Update-FasterOffers; if ($script:menuMinimized) { $script:menuMinimized = $false; $form.WindowState = 'Normal'; [void]$form.Activate() }; try { Update-HomeState } catch { }
             if ($code -ne 0) {
-                $logs = Get-GameFile $State.PlayingName 'logs'
+                $logs = Join-Path (Get-GameSaveDir $State.PlayingName) 'logs'
                 $meaning = Get-ExitCodeText $code
                 $log = Find-GameLog $State.PlayingName $State.PlayStarted
                 Write-AppLog "the game '$($State.PlayingName)' ended with $meaning; log: $(if ($log) { $log.FullName } else { 'none was written' })"
@@ -1570,29 +1626,52 @@ function Invoke-Click($ctl) {
 function Get-KnownDisc {
     $s = Get-Settings
     $p = [string]$s.DiscPath
-    if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+    if ($p -and (Test-Path -LiteralPath $p)) { return $p }; if ($script:discCache -and (Test-Path -LiteralPath $script:discCache)) { return $script:discCache }
     foreach ($bg in @(Get-BuiltGames)) {
-        try { $q = Resolve-AppPath ([string]$bg.iso); if ($q -and (Test-Path -LiteralPath $q)) { return $q } } catch { }
+        try { $q = Resolve-AppPath ([string]$bg.iso); if ($q -and (Test-Path -LiteralPath $q)) { $script:discCache = $q; return $q } } catch { }
     }
     foreach ($dir in @($Root, (Join-Path $Root 'isos'))) {
         if (-not (Test-Path -LiteralPath $dir)) { continue }
         foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.iso' -File -ErrorAction SilentlyContinue)) {
             $ser = Get-DiscSerial $f.FullName
-            if ($ser -eq 'SLES_549.51' -or $ser -eq 'SLUS_216.61') { return $f.FullName }
+            if ($ser -eq 'SLES_549.51' -or $ser -eq 'SLUS_216.61') { $script:discCache = $f.FullName; return $f.FullName }
         }
     }
+    return ''
+}
+function Get-GameRegion($g) {
+    $x = ([string]$g.name + ' ' + [string]$g.elf + ' ' + [string]$g.iso)
+    if ($x -match 'SLES_549|Ben-10-EU|(^|[-_ \\])EU($|[-_ .\\])') { return 'EU' }
+    if ($x -match 'SLUS_216|Ben-10-USA|(^|[-_ \\])USA($|[-_ .\\])') { return 'USA' }
     return ''
 }
 function Update-HomeState {
     if (-not $homeMenu) { return }
     $disc = Get-KnownDisc
-    $names = @(Get-BuiltGames | ForEach-Object { [string]$_.name })
+    $built = @(Get-BuiltGames)
+    $byRegion = @{}
+    foreach ($bg in $built) { $r = Get-GameRegion $bg; if ($r -and -not $byRegion.ContainsKey($r)) { $byRegion[$r] = [string]$bg.name } }
     $lines = New-Object 'Collections.Generic.List[string]'
-    foreach ($pair in @(@('Ben-10-EU', 'EU version'), @('Ben-10-USA', 'USA version'))) {
-        if ($names -contains $pair[0]) { $lines.Add($pair[1] + '|READY|1') } else { $lines.Add($pair[1] + '|NOT BUILT|0') }
+    foreach ($pair in @(@('EU', 'EU version'), @('USA', 'USA version'))) {
+        if ($byRegion.ContainsKey($pair[0])) { $lines.Add($pair[1] + '|READY|1') } else { $lines.Add($pair[1] + '|NOT BUILT|0') }
     }
-    foreach ($n in $names) { if ($n -ne 'Ben-10-EU' -and $n -ne 'Ben-10-USA') { $lines.Add($n + '|READY|1') } }
+    foreach ($bg in $built) { if (-not (Get-GameRegion $bg)) { $lines.Add([string]$bg.name + '|READY|1') } }
     $homeMenu.SetState([bool]$disc, [string]$disc, $lines.ToArray())
+    $log = ($lines.ToArray() -join ';')
+    if ($log -ne $script:homeStateLog) { $script:homeStateLog = $log; Write-AppLog ('Home state: ' + $log) }
+}
+function Invoke-PickSaveDir {
+    $dlg = New-Object Windows.Forms.FolderBrowserDialog
+    $dlg.Description = 'Choose the folder where your game saves are kept.'
+    $dlg.SelectedPath = Get-SaveDir
+    $dlg.ShowNewFolderButton = $true
+    if ($dlg.ShowDialog($form) -eq 'OK') {
+        $s = Get-Settings; $s['SaveDir'] = $dlg.SelectedPath; Save-Settings $s
+        try { New-Item -ItemType Directory -Force -Path $dlg.SelectedPath | Out-Null } catch { }
+        $homeMenu.SetSaveDir($dlg.SelectedPath)
+        $homeMenu.ShowNotice('Save folder updated.')
+    }
+    $dlg.Dispose()
 }
 function Get-EngineScreen {
     foreach ($k in @('build', 'done')) { if ($P[$k] -and $P[$k].Visible) { return $k } }
@@ -1671,6 +1750,8 @@ function Invoke-HomeAction([string]$id) {
             Sync-Engine
         }
         'locate' { Invoke-Locate }
+        'savedir' { Invoke-PickSaveDir }
+        'refresh' { try { Update-HomeState } catch { Write-AppLog ('Menu refresh error: ' + $_.Exception.Message) } }
         'link' {
             if ($UpdateRepo -like 'REPLACE_WITH*') { $homeMenu.ShowNotice('The project page is not published yet.') }
             else { Start-Process ('https://github.com/' + $UpdateRepo) }
@@ -1682,6 +1763,8 @@ function Invoke-HomeAction([string]$id) {
         'doneback' { Show-Screen 'welcome' }
     }
 }
+# strict mode: every script-scope variable the menu reads must exist first
+$script:discCache = ''; $script:syncN = 0; $script:builtSig = ''; $script:homeStateLog = ''; $script:syncErr = $false; $script:engineKey = ''; $script:homeFocused = $false; $script:menuMinimized = $false
 if ($env:PS2APP_CLASSIC -ne '1') {
     try {
         Add-Type -TypeDefinition (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'home.cs')) -ReferencedAssemblies System.Windows.Forms, System.Drawing
@@ -1691,7 +1774,7 @@ if ($env:PS2APP_CLASSIC -ne '1') {
         $homeMenu.BringToFront()
         $s0 = Get-Settings
         $homeMenu.LoadSettings([bool]$s0.Fullscreen, [bool]$s0.Widescreen, [int]$s0.Language, [string]$s0.Region, [bool]$s0.AutoUpdate)
-        $homeMenu.SetKeepOpen((Get-KeepMenu $s0))
+        $homeMenu.SetKeepOpen((Get-KeepMenu $s0)); $homeMenu.SetSaveDir((Get-SaveDir))
         $homeMenu.Add_ButtonClicked({ param($id) Invoke-HomeAction ([string]$id) })
         $homeMenu.Add_SettingChanged({ param($k, $v)
             $s = Get-Settings
@@ -1701,7 +1784,7 @@ if ($env:PS2APP_CLASSIC -ne '1') {
                 'autoupdate' { $s.AutoUpdate = ([string]$v -eq '1') }
                 'language' { $s.Language = [int]$v }
                 'region' { $s.Region = [string]$v }
-                'keepopen' { $s | Add-Member -NotePropertyName KeepMenu -NotePropertyValue ([string]$v -eq '1') -Force }
+                'keepopen' { $s['KeepMenu'] = ([string]$v -eq '1') }
             }
             Save-Settings $s
         })
@@ -1709,7 +1792,7 @@ if ($env:PS2APP_CLASSIC -ne '1') {
         $syncTimer = New-Object Windows.Forms.Timer
         $syncTimer.Interval = 250
         $syncTimer.Add_Tick({
-            try { Sync-Engine; $script:syncN = 1 + [int]$script:syncN; if ($script:syncN % 12 -eq 0 -and $script:engineKey -eq 'welcome') { $sig = (@(Get-BuiltGames | ForEach-Object { [string]$_.name }) -join ','); if ($sig -ne $script:builtSig) { $script:builtSig = $sig; Update-HomeState } } }
+            try { Sync-Engine; $script:syncN = 1 + [int]$script:syncN; if ($script:syncN % 12 -eq 0 -and $script:engineKey -eq 'welcome') { $sig = ''; foreach ($dd in [IO.Directory]::GetDirectories($GamesDir)) { $sig += $dd + [IO.File]::GetLastWriteTimeUtc((Join-Path $dd 'app.json')).Ticks + [IO.File]::GetLastWriteTimeUtc((Join-Path $Root ('build\native-' + (Split-Path $dd -Leaf) + '\ps2run.exe'))).Ticks + ';' }; if ($sig -ne $script:builtSig) { $script:builtSig = $sig; Update-HomeState } } }
             catch { if (-not $script:syncErr) { $script:syncErr = $true; Write-AppLog ('Menu sync error: ' + $_.Exception.Message) } }
         })
         $syncTimer.Start()
@@ -1821,7 +1904,7 @@ function Set-PatchError([string]$message, [string]$detail) {
     $p.Detail = $detail
 }
 
-function Start-PatchRun([string]$mode, [string]$then = '') {
+function Start-PatchRun([string]$mode, [string]$then = '') { if ($mode -eq 'fetch' -or $mode -eq 'python') { Set-PatchError 'Online patch lookup is disabled in this build.' 'No internet requests are made.'; Show-PatchState; return }
     $p = $State.Patch
     $image = Get-PatchImage
     $script = Join-Path $Root 'scripts\pnach.py'
@@ -2336,7 +2419,10 @@ function Start-Build([string]$name, [string]$image, [bool]$faster = $false, $pat
     }
     $tc = Get-ToolchainState
     $b.Tools = @{ Missing = @($tc.Missing); Total = [double]$tc.Bytes; Done = 0.0; Cur = 0.0; Current = $null; Short = '' }
-    if ($tc.Missing.Count -gt 0 -or -not $tc.HasEnv) { $b.Plan += @{ Id = 'tools'; Weight = 30 } }
+    if ($tc.Missing.Count -gt 0 -or -not $tc.HasEnv) {
+        if (-not (Find-ToolPack)) { Set-BuildFailed $b 'The offline build tools are missing. Put toolpack.zip next to Guardian of the Globe.exe (it is attached to the project release; this app never downloads anything), then press Try again.'; return }
+        $b.Plan += @{ Id = 'tools'; Weight = 30 }
+    }
     if ((Test-SetupNeeded) -or $b.Plan.Count -gt 0 -or ($batch -and $batch.First)) { $b.Plan += @{ Id = 'setup'; Weight = 12 } }
     $b.Plan += @{ Id = 'port'; Weight = 58 }
     $sum = 0.0
@@ -2360,11 +2446,19 @@ function Start-Stage([int]$index) {
     $bash = Join-Path $ToolsDir 'mingit\usr\bin\bash.exe'
     switch ($stage.Id) {
         'tools' {
-            Add-LogLine $b '--- Downloading the build tools ---'
-            Set-Status 'Downloading build tools' "About $ToolsDownloadMb MB, once."
             $script = Join-Path $Root 'scripts\portable.ps1'
             $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-            $b.Child = Start-Child $powershell "-NoProfile -ExecutionPolicy Bypass -File `"$script`" -ForApp" $false
+            $pack = Find-ToolPack
+            if ($pack -and (Test-Path -LiteralPath (Join-Path $Root 'scripts\toolpack.ps1'))) {
+                Add-LogLine $b '--- Unpacking the offline build tools ---'
+                Set-Status 'Unpacking the build tools' 'From the offline pack, once. No download is needed.'
+                $tpScript = Join-Path $Root 'scripts\toolpack.ps1'
+                $b.Child = Start-Child $powershell "-NoProfile -ExecutionPolicy Bypass -File `"$tpScript`" -Extract `"$pack`" -ForApp" $false
+            } else {
+                Add-LogLine $b '--- Downloading the build tools ---'
+                Set-Status 'Downloading build tools' "About $ToolsDownloadMb MB, once."
+                $b.Child = Start-Child $powershell "-NoProfile -ExecutionPolicy Bypass -File `"$script`" -ForApp" $false
+            }
         }
         'setup' {
             Add-LogLine $b '--- Preparing the libraries and translator tools ---'
@@ -3174,6 +3268,7 @@ function Get-AutoTried {
 # Is it a good moment? Only on the welcome screen with the window free: no build, rebuild, patch run or game started from the app,
 # and no message box open (a window with a message box on top cannot take the focus).
 function Test-AutoUpdateNow {
+    return $false  # online updates are permanently disabled
     if (-not $P['welcome'].Visible -or -not $form.CanFocus) { return $false }
     if ($State.Build -or $State.Batch -or $State.Playing -or $State.Patch.Run) { return $false }
     if ($State.Newest -and (Get-AutoTried) -eq $State.Newest) { return $false }

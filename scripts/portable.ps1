@@ -123,7 +123,7 @@ function Download-Once($tool, [string]$dest) {
     if ($have -gt $total) { Remove-Item -LiteralPath $part -Force; $have = 0 }
     if ($have -eq $total) { Move-Item -LiteralPath $part -Destination $dest -Force; return }
 
-    $request = [Net.HttpWebRequest]::Create($tool.Url)
+    throw 'Downloads are disabled in this build. Put toolpack.zip next to the app.'; $request = [Net.HttpWebRequest]::Create($tool.Url)
     $request.UserAgent = 'ps2-native-recomp-portable'
     $request.Proxy = [Net.WebRequest]::GetSystemWebProxy()
     $request.Proxy.Credentials = [Net.CredentialCache]::DefaultCredentials

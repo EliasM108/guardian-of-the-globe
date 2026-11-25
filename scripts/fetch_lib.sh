@@ -33,7 +33,7 @@ fetch_download() {
     fd_flags="$fd_flags --retry-all-errors"
   fi
   # shellcheck disable=SC2086
-  if (cd "$fd_dir" && curl -fL $fd_flags -o "$fd_out" "$fd_url"); then return 0; fi
+  echo "downloads are disabled in this build: $fd_url" >&2; return 1
   rm -f "$fd_dir/$fd_out"
   fd_show="$here/downloads"
   if command -v cygpath > /dev/null; then fd_show=$(cygpath -w "$fd_show"); fi

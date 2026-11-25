@@ -107,20 +107,22 @@ constexpr const char *kFont[95] = {
     "..... ..... .#... #.#.# ...#. ..... ..... .....",  // ~
 };
 
-constexpr int kEntries = 10;
-constexpr Command kCommands[kEntries] = {Command::resume,   Command::save,       Command::load, Command::look,        Command::scale,
-                                         Command::sharp_2d, Command::fullscreen, Command::keys, Command::change_keys, Command::quit};
+// Guardian of the Globe: a minimal menu. The other commands (look, scale, sharp_2d, keys, change_keys) still exist in the code
+// but are not listed, so the window never gets them from the menu. Keys: edit keys.ini.
+constexpr int kEntries = 6;
+constexpr Command kCommands[kEntries] = {Command::resume, Command::save, Command::load, Command::fullscreen, Command::change_keys, Command::quit};
 // the program's key for the same thing, shown dim at the right end of the entry
-constexpr const char *kKeys[kEntries] = {"F1", "F5", "F8", "F2", "", "", "F11", "", "", ""};
+constexpr const char *kKeys[kEntries] = {"F1", "F5", "F8", "F11", "", ""};
 constexpr int kVisibleRows = 11;  // lines of the keys page shown at once; the page scrolls
 constexpr int kKeysPageChars = 58;
 
 constexpr std::uint32_t rgba(int r, int g, int b, int a) {
     return static_cast<std::uint32_t>(r) | static_cast<std::uint32_t>(g) << 8 | static_cast<std::uint32_t>(b) << 16 | static_cast<std::uint32_t>(a) << 24;
 }
-constexpr std::uint32_t kPanel = rgba(12, 14, 20, 215), kFrame = rgba(96, 104, 124, 255), kTitle = rgba(240, 200, 110, 255),
-                        kText = rgba(226, 229, 236, 255), kBar = rgba(236, 190, 88, 248), kBarText = rgba(16, 16, 20, 255),
-                        kDim = rgba(140, 146, 162, 255), kBarDim = rgba(84, 62, 24, 255);
+// black and green, like the app
+constexpr std::uint32_t kPanel = rgba(5, 11, 7, 225), kFrame = rgba(60, 170, 70, 255), kTitle = rgba(120, 235, 50, 255),
+                        kText = rgba(222, 245, 216, 255), kBar = rgba(120, 235, 50, 245), kBarText = rgba(5, 16, 6, 255),
+                        kDim = rgba(118, 160, 120, 255), kBarDim = rgba(28, 82, 26, 255);
 
 struct Canvas {
     Picture &p;
@@ -263,7 +265,7 @@ bool Menu::select_at(int x, int y) {
 
 void Menu::draw_keys(int window_width, int window_height, const Values &values, Picture &out) {
     static const std::string kTitleText = "Change keys - the game waits", kHint = "Enter / click: change a key     Esc / Circle: back",
-                             kFixed = "Not usable: F1 F2 F5 F8 F9 F11 (the program's)", kCapture = "Press a key or mouse button... (Esc: cancel)";
+                             kFixed = "Not usable: F1-F6 F8 F9 F11 (the program's)", kCapture = "Press a key or mouse button... (Esc: cancel)";
     key_rows_ = static_cast<int>(values.key_rows.size());
     fit();
     const int n = key_rows_, shown = std::min(n, kVisibleRows);
@@ -331,7 +333,7 @@ void Menu::draw(int window_width, int window_height, const Values &values, Pictu
         draw_keys(window_width, window_height, values, out);
         return;
     }
-    static const std::string kTitleText = "Quick menu - the game waits", kHint = "Enter / Cross: OK     F1 / Esc / Circle: back";
+    static const std::string kTitleText = "GUARDIAN OF THE GLOBE - paused", kHint = "Enter: OK  Esc: back  F3/F4/F6: sound";
     std::string lines[kEntries];
     std::size_t chars = std::max(kTitleText.size(), kHint.size());
     for (int i = 0; i < kEntries; ++i) {
